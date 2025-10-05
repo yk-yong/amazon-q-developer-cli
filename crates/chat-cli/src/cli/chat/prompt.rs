@@ -509,10 +509,14 @@ pub fn rl(
     if ExperimentManager::is_enabled(os, ExperimentName::Delegate) {
         if let Some(key) = os.database.settings.get_string(Setting::DelegateModeKey) {
             if key.len() == 1 {
-                rl.bind_sequence(
-                    KeyEvent(KeyCode::Char(key.chars().next().unwrap()), Modifiers::CTRL),
-                    EventHandler::Simple(Cmd::Insert(1, "/delegate ".to_string())),
-                );
+                let key_char = key.chars().next().unwrap();
+                // Skip binding 'd' as Ctrl+D has special EOF behavior in readline
+                if key_char != 'd' && key_char != 'D' {
+                    rl.bind_sequence(
+                        KeyEvent(KeyCode::Char(key_char), Modifiers::CTRL),
+                        EventHandler::Simple(Cmd::Insert(1, "/delegate ".to_string())),
+                    );
+                }
             }
         };
     }
@@ -927,5 +931,34 @@ mod tests {
         assert!(available_commands.contains(&"/help"));
         assert!(available_commands.contains(&"/clear"));
         assert!(available_commands.contains(&"/quit"));
+    }
+
+    #[tokio::test]
+    async fn test_delegate_key_binding_skips_d() {
+        // Test that 'd' is not bound for delegate mode to preserve Ctrl+D EOF behavior
+        use crate::database::settings::Setting;
+        
+        let (prompt_request_sender, _) = tokio::sync::broadcast::channel::<PromptQuery>(5);
+        let (_, prompt_response_receiver) = tokio::sync::broadcast::channel::<PromptQueryResult>(5);
+
+        let mut mock_os = crate::os::Os::new().await.unwrap();
+        
+        // Enable delegate experiment
+        mock_os.database.settings.set(Setting::EnabledDelegate, true).await.unwrap();
+        
+        // Test with 'd' - should not bind
+        mock_os.database.settings.set(Setting::DelegateModeKey, "d".to_string()).await.unwrap();
+        let result = rl(&mock_os, prompt_request_sender.clone(), prompt_response_receiver.clone());
+        assert!(result.is_ok(), "Should create editor successfully even with 'd' key");
+        
+        // Test with 'D' - should also not bind
+        mock_os.database.settings.set(Setting::DelegateModeKey, "D".to_string()).await.unwrap();
+        let result = rl(&mock_os, prompt_request_sender.clone(), prompt_response_receiver.clone());
+        assert!(result.is_ok(), "Should create editor successfully even with 'D' key");
+        
+        // Test with other keys - should bind successfully
+        mock_os.database.settings.set(Setting::DelegateModeKey, "l".to_string()).await.unwrap();
+        let result = rl(&mock_os, prompt_request_sender.clone(), prompt_response_receiver.clone());
+        assert!(result.is_ok(), "Should create editor successfully with 'l' key");
     }
 }
